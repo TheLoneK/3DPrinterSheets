@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Saved Forms</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body class="reader-page">
+  <header class="topbar">
+    <a class="brand" href="./">3D Printer Sheets</a>
+    <nav class="topnav" aria-label="Pages">
+      <a href="./">Tickets</a>
+      <a href="./reader.html" aria-current="page">Saved forms</a>
+    </nav>
+    <time id="clock" class="clock"></time>
+  </header>
+
+  <section class="tools" aria-label="Load saved forms">
+    <div class="tools-inner">
+      <div class="tool-row">
+        <button id="open-folder" type="button" class="btn btn-ink">Open save folder</button>
+        <button id="pick-folder" type="button" class="btn">Open another folder</button>
+        <label class="btn file-btn">Open files<input id="file-input" type="file" accept=".json,application/json" multiple></label>
+        <button id="show-recent" type="button" class="btn" aria-pressed="true">Finished in this browser</button>
+      </div>
+      <div class="tool-row">
+        <input id="search" class="search" type="search" placeholder="Search serial, model, technician, parts or notes" aria-label="Search forms">
+        <div class="filters" role="group" aria-label="Show">
+          <button type="button" class="filter" data-filter="all" aria-pressed="true">All</button>
+          <button type="button" class="filter" data-filter="open" aria-pressed="false">In progress</button>
+          <button type="button" class="filter" data-filter="passed" aria-pressed="false">Passed</button>
+          <button type="button" class="filter" data-filter="failed" aria-pressed="false">Failed</button>
+        </div>
+      </div>
+      <p id="source-line" class="source-line" role="status"></p>
+    </div>
+  </section>
+
+  <main class="bench reader">
+    <aside class="rail" aria-label="Forms">
+      <ul id="results" class="rail-list results"></ul>
+    </aside>
+    <article id="detail" class="ticket detail" tabindex="-1" aria-live="polite"></article>
+  </main>
+
+  <div class="drop-hint" aria-hidden="true">Drop forms to read them</div>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <script type="module" src="./js/reader.js"></script>
+</body>
+</html>

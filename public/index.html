@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Printer Tickets</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./">3D Printer Sheets</a>
+    <nav class="topnav" aria-label="Pages">
+      <a href="./" aria-current="page">Tickets</a>
+      <a href="./reader.html">Saved forms</a>
+    </nav>
+    <div class="folder">
+      <span class="folder-label">Save folder</span>
+      <strong id="folder-name" class="folder-name">…</strong>
+      <button id="folder-btn" type="button" class="btn btn-small">Choose folder</button>
+    </div>
+    <time id="clock" class="clock"></time>
+  </header>
+
+  <section class="plate" aria-label="Open tickets">
+    <div class="plate-inner">
+      <label for="scan" class="plate-label">Scan a printer barcode</label>
+      <div class="plate-row">
+        <input id="scan" class="scan" type="text" autocomplete="off" spellcheck="false" maxlength="128"
+               placeholder="Scan, or type a serial and press Enter" autofocus>
+        <button id="new-ticket" type="button" class="btn btn-ink">New ticket by hand</button>
+      </div>
+      <p class="plate-hint">Scan back to back to open several tickets. Press Esc in any field to come back here.</p>
+    </div>
+  </section>
+
+  <main class="bench">
+    <aside class="rail" aria-labelledby="rail-title">
+      <h2 class="rail-title" id="rail-title">Open tickets <span id="rail-count" class="count-pill">0</span></h2>
+      <ul id="rail-list" class="rail-list"></ul>
+    </aside>
+    <div id="ticket" class="ticket-host"></div>
+  </main>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>

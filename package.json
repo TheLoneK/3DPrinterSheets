@@ -1,0 +1,20 @@
+{
+  "name": "3dprintersheets",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Quick utility to optimize tracking workflow of 3D printer repairs.",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "watch": "tsc --watch",
+    "preview": "node scripts/serve.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TheLoneK/3dprintersheets.git"
+  }
+}
