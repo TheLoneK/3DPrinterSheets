@@ -1,5 +1,5 @@
 // Browser storage for open tickets (autosave), recently finished tickets, and the last technician.
-import { normalizeTicket, type Ticket } from './model.js';
+import { LIMITS, cleanText, normalizeTicket, type Ticket } from './model.js';
 
 export const OPEN_KEY = '3dps.open.v1';
 const FINISHED_KEY = '3dps.finished.v1';
@@ -38,17 +38,20 @@ export function addFinished(t: Ticket): boolean {
   return write(FINISHED_KEY, list.slice(0, FINISHED_MAX));
 }
 
+export type ReopenResult = 'ok' | 'full' | 'storage';
+
 /** Puts a saved form back into the open tickets list. */
-export function reopen(t: Ticket): boolean {
+export function reopen(t: Ticket): ReopenResult {
   const ticket: Ticket = { ...t, status: 'open', finishedAt: null, updatedAt: new Date().toISOString() };
   const open = loadOpen().filter((x) => x.id !== t.id);
+  if (open.length >= LIMITS.openTickets) return 'full';
   open.push(ticket);
-  return saveOpen(open);
+  return saveOpen(open) ? 'ok' : 'storage';
 }
 
 export function loadTech(): string {
   try {
-    return (localStorage.getItem(TECH_KEY) ?? '').slice(0, 32);
+    return cleanText(localStorage.getItem(TECH_KEY) ?? '').trim().slice(0, LIMITS.short);
   } catch {
     return '';
   }
@@ -56,7 +59,7 @@ export function loadTech(): string {
 
 export function saveTech(name: string): void {
   try {
-    localStorage.setItem(TECH_KEY, name);
+    localStorage.setItem(TECH_KEY, cleanText(name).trim().slice(0, LIMITS.short));
   } catch {
     /* storage blocked; the field still works for this ticket */
   }

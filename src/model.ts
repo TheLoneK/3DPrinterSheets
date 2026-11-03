@@ -8,7 +8,24 @@ export const LIMITS = {
   qtyMax: 99,
   parts: 30,
   fileBytes: 200_000,
+  openTickets: 100, // open tickets kept in this browser
+  filesPerLoad: 1000, // forms read from one folder or one batch of files
 } as const;
+
+// Control characters, bidi overrides/isolates and zero-width marks. They're invisible on screen
+// but can make a serial look like another one, break file names, or hide text in a form.
+const SINGLE_LINE_JUNK = /[\u0000-\u001F\u007F-\u009F​-‏‪-‮⁦-⁩﻿]/g;
+const MULTI_LINE_JUNK = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F​-‏‪-‮⁦-⁩﻿]/g;
+
+/** Strips invisible and control characters. Notes keep line breaks and tabs; other fields don't. */
+export function cleanText(s: string, multiline = false): string {
+  return multiline ? s.replace(/\r\n?/g, '\n').replace(MULTI_LINE_JUNK, '') : s.replace(SINGLE_LINE_JUNK, '');
+}
+
+/** How serials are compared: case and surrounding spaces don't matter. */
+export const serialKey = (s: string): string => cleanText(s).trim().toLowerCase();
+
+const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 export type Status = 'open' | 'passed' | 'failed';
 export type PrintResult = '' | 'pass' | 'fail';
@@ -52,9 +69,9 @@ export function newTicket(serial: string, openedBy: Ticket['openedBy'], technici
   return {
     version: 1,
     id: uid(),
-    serial: serial.slice(0, LIMITS.short),
+    serial: cleanText(serial).trim().slice(0, LIMITS.short),
     model: '',
-    technician: technician.slice(0, LIMITS.short),
+    technician: cleanText(technician).trim().slice(0, LIMITS.short),
     openedAt: now,
     updatedAt: now,
     finishedAt: null,
@@ -79,23 +96,45 @@ export function stepsDone(t: Ticket): [boolean, boolean, boolean, boolean] {
   ];
 }
 
+/** True while a ticket is still exactly as "New ticket by hand" made it. */
+export function isBlank(t: Ticket): boolean {
+  return (
+    !t.serial.trim() &&
+    !t.model.trim() &&
+    !t.notes.trim() &&
+    !t.repair.errorCodes.trim() &&
+    !t.visual.done &&
+    !t.power.powerOk &&
+    !t.power.calibrationOk &&
+    !t.repair.errorsFixed &&
+    !t.repair.partsReplaced &&
+    t.testPrint.result === '' &&
+    t.testPrint.count === 0 &&
+    t.parts.every((p) => !p.name.trim())
+  );
+}
+
+/** Whole numbers only. Strings like "", "abc" or "-" give the fallback; "1e3" or "1.6" are read as numbers, then clamped. */
 export function clampInt(v: unknown, min: number, max: number, fallback = min): number {
-  const n = typeof v === 'number' ? v : typeof v === 'string' ? parseInt(v, 10) : NaN;
+  const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v.trim()) : NaN;
   if (!Number.isFinite(n)) return fallback;
   return Math.min(max, Math.max(min, Math.round(n)));
 }
 
-const str = (v: unknown, max: number): string => (typeof v === 'string' ? v.slice(0, max) : '');
+const str = (v: unknown, max: number, multiline = false): string =>
+  typeof v === 'string' ? (multiline ? cleanText(v, true) : cleanText(v).trim()).slice(0, max) : '';
 const bool = (v: unknown): boolean => v === true;
 const obj = (v: unknown): Record<string, unknown> =>
   v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+// Only full ISO timestamps (what the app writes). Loose strings like "1" or "May" are rejected.
+const ISO_LIKE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:\d{2})$/;
 const iso = (v: unknown): string | null =>
-  typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? new Date(v).toISOString() : null;
+  typeof v === 'string' && ISO_LIKE.test(v) && !Number.isNaN(Date.parse(v)) ? new Date(v).toISOString() : null;
 
 /** Turns untrusted data (browser storage, a file someone opened) into a valid Ticket, or null. */
 export function normalizeTicket(raw: unknown): Ticket | null {
   const r = obj(raw);
-  if (typeof r.id !== 'string' || !r.id) return null;
+  if (typeof r.id !== 'string' || !SAFE_ID.test(r.id)) return null;
   const openedAt = iso(r.openedAt) ?? new Date().toISOString();
   const status: Status = r.status === 'passed' || r.status === 'failed' ? r.status : 'open';
   const v = obj(r.visual);
@@ -106,21 +145,22 @@ export function normalizeTicket(raw: unknown): Ticket | null {
     ? r.parts.slice(0, LIMITS.parts).map((x): PartLine => {
         const o = obj(x);
         return {
-          id: typeof o.id === 'string' && o.id ? o.id.slice(0, 64) : uid(),
+          id: typeof o.id === 'string' && SAFE_ID.test(o.id) ? o.id : uid(),
           name: str(o.name, LIMITS.short),
           qty: clampInt(o.qty, 0, LIMITS.qtyMax, 1),
         };
       })
     : [];
+  const updatedAt = iso(r.updatedAt) ?? openedAt;
   return {
     version: 1,
-    id: r.id.slice(0, 64),
+    id: r.id,
     serial: str(r.serial, LIMITS.short),
     model: str(r.model, LIMITS.short),
     technician: str(r.technician, LIMITS.short),
     openedAt,
-    updatedAt: iso(r.updatedAt) ?? openedAt,
-    finishedAt: status === 'open' ? null : iso(r.finishedAt),
+    updatedAt,
+    finishedAt: status === 'open' ? null : (iso(r.finishedAt) ?? updatedAt),
     status,
     openedBy: r.openedBy === 'scan' ? 'scan' : 'manual',
     visual: { done: bool(v.done) },
@@ -135,7 +175,7 @@ export function normalizeTicket(raw: unknown): Ticket | null {
       count: clampInt(tp.count, 0, LIMITS.printsMax, 0),
     },
     parts,
-    notes: str(r.notes, LIMITS.notes),
+    notes: str(r.notes, LIMITS.notes, true),
   };
 }
 
