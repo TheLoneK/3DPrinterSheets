@@ -90,20 +90,33 @@ export async function getSaveFolder(): Promise<FileSystemDirectoryHandle | null>
   return current;
 }
 
-/** Opens the folder picker. Returns null if the person closes it. */
-export async function chooseFolder(remember = true, mode: Mode = 'readwrite'): Promise<FileSystemDirectoryHandle | null> {
-  if (!window.showDirectoryPicker) return null;
-  try {
-    const handle = await window.showDirectoryPicker({ id: '3dps-forms', mode });
-    if (remember) {
-      current = handle;
-      if (!flag.get(NO_MEMORY)) await kvSet('folder', handle).catch(() => undefined);
+let picking: Promise<FileSystemDirectoryHandle | null> | null = null;
+
+/**
+ * Opens the folder picker. Returns null if the person closes it.
+ * A second click while the picker is already open waits on the same picker instead of
+ * throwing "File picker already active".
+ */
+export function chooseFolder(remember = true, mode: Mode = 'readwrite'): Promise<FileSystemDirectoryHandle | null> {
+  if (!window.showDirectoryPicker) return Promise.resolve(null);
+  if (picking) return picking;
+  const run = async (): Promise<FileSystemDirectoryHandle | null> => {
+    try {
+      const handle = await window.showDirectoryPicker!({ id: '3dps-forms', mode });
+      if (remember) {
+        current = handle;
+        if (!flag.get(NO_MEMORY)) await kvSet('folder', handle).catch(() => undefined);
+      }
+      return handle;
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return null;
+      throw err;
     }
-    return handle;
-  } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') return null;
-    throw err;
-  }
+  };
+  picking = run().finally(() => {
+    picking = null;
+  });
+  return picking;
 }
 
 export async function hasPermission(handle: FileSystemHandle, mode: Mode, ask: boolean): Promise<boolean> {
@@ -136,8 +149,19 @@ export type SaveResult =
   | { where: 'download'; file: string }
   | { where: 'cancelled' };
 
+// Saves run one at a time. Two quick clicks (or Save then Finish) would otherwise open two
+// writers on the same file at once, and one of them fails or leaves a half-written file.
+let saveQueue: Promise<unknown> = Promise.resolve();
+
 /** Saves into the remembered folder (asking for one the first time), or downloads the file. */
-export async function saveTicket(t: Ticket): Promise<SaveResult> {
+export function saveTicket(t: Ticket): Promise<SaveResult> {
+  const snapshot: Ticket = structuredClone(t);
+  const next = saveQueue.then(() => writeTicket(snapshot));
+  saveQueue = next.catch(() => undefined);
+  return next;
+}
+
+async function writeTicket(t: Ticket): Promise<SaveResult> {
   if (folderSupported) {
     const handle = (await getSaveFolder()) ?? (await chooseFolder());
     if (!handle) return { where: 'cancelled' };
@@ -145,8 +169,13 @@ export async function saveTicket(t: Ticket): Promise<SaveResult> {
       const file = ticketFileName(t);
       const fileHandle = await handle.getFileHandle(file, { create: true });
       const writable = await fileHandle.createWritable();
-      await writable.write(ticketJson(t));
-      await writable.close();
+      try {
+        await writable.write(ticketJson(t));
+        await writable.close();
+      } catch (err) {
+        await writable.abort().catch(() => undefined);
+        throw err;
+      }
       return { where: 'folder', folder: handle.name, file };
     }
   }
@@ -158,26 +187,35 @@ export interface FileEntry {
   file: string;
 }
 
-export async function readFolder(handle: FileSystemDirectoryHandle): Promise<{ entries: FileEntry[]; skipped: number }> {
+export interface ReadResult {
+  entries: FileEntry[];
+  skipped: number;
+  /** True when there were more files than LIMITS.filesPerLoad and the rest weren't read. */
+  truncated: boolean;
+}
+
+export async function readFolder(handle: FileSystemDirectoryHandle): Promise<ReadResult> {
   const entries: FileEntry[] = [];
   let skipped = 0;
+  let seen = 0;
   for await (const item of handle.values()) {
     if (item.kind !== 'file' || !item.name.toLowerCase().endsWith('.json')) continue;
+    if (++seen > LIMITS.filesPerLoad) return { entries, skipped, truncated: true };
     const file = await (item as FileSystemFileHandle).getFile();
     const ticket = file.size <= LIMITS.fileBytes ? parseTicketText(await file.text()) : null;
     if (ticket) entries.push({ ticket, file: item.name });
     else skipped++;
   }
-  return { entries, skipped };
+  return { entries, skipped, truncated: false };
 }
 
-export async function readFiles(files: Iterable<File>): Promise<{ entries: FileEntry[]; skipped: number }> {
+export async function readFiles(files: File[]): Promise<ReadResult> {
   const entries: FileEntry[] = [];
   let skipped = 0;
-  for (const file of files) {
+  for (const file of files.slice(0, LIMITS.filesPerLoad)) {
     const ticket = file.size <= LIMITS.fileBytes ? parseTicketText(await file.text()) : null;
     if (ticket) entries.push({ ticket, file: file.name });
     else skipped++;
   }
-  return { entries, skipped };
+  return { entries, skipped, truncated: files.length > LIMITS.filesPerLoad };
 }

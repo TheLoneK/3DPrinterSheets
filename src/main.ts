@@ -1,5 +1,18 @@
 // Tickets page: scan to open tickets, work through the checklist, autosave, finish and save to a folder.
-import { LIMITS, STEP_NAMES, blankPart, clampInt, newTicket, stepsDone, uid, type PartLine, type Ticket } from './model.js';
+import {
+  LIMITS,
+  STEP_NAMES,
+  blankPart,
+  clampInt,
+  cleanText,
+  isBlank,
+  newTicket,
+  serialKey,
+  stepsDone,
+  uid,
+  type PartLine,
+  type Ticket,
+} from './model.js';
 import { OPEN_KEY, addFinished, loadOpen, loadTech, saveOpen, saveTech } from './store.js';
 import { byId, el, startClock, toast } from './dom.js';
 import { fmtDateTime, fmtDuration, fmtTime } from './format.js';
@@ -8,6 +21,9 @@ import { chooseFolder, folderSupported, getSaveFolder, saveTicket, type SaveResu
 let tickets: Ticket[] = loadOpen();
 let activeId: string | null = tickets[0]?.id ?? null;
 let saveTimer: number | undefined;
+// Tickets with a save or finish in progress. Their action buttons ignore clicks until it's done,
+// so a double click can't save twice, finish twice, or delete a ticket that's mid-save.
+const busy = new Set<string>();
 
 const scanInput = byId<HTMLInputElement>('scan');
 const railList = byId('rail-list');
@@ -56,20 +72,34 @@ function flush(): void {
 
 /* ---------- opening tickets ---------- */
 
+function roomForAnother(): boolean {
+  if (tickets.length < LIMITS.openTickets) return true;
+  toast(`There are already ${LIMITS.openTickets} open tickets. Finish or delete some before opening more.`, 'fail');
+  return false;
+}
+
+/** Another open ticket (not `exceptId`) with the same serial, ignoring case and spaces. */
+function sameSerial(serial: string, exceptId?: string): Ticket | undefined {
+  const key = serialKey(serial);
+  if (!key) return undefined;
+  return tickets.find((t) => t.id !== exceptId && serialKey(t.serial) === key);
+}
+
 function openFromScan(raw: string): void {
-  let code = raw.trim();
+  let code = cleanText(raw).trim();
   if (!code) return;
   if (code.length > LIMITS.short) {
     toast(`That code is longer than ${LIMITS.short} characters, so it was cut to fit. Check the serial.`, 'warn');
-    code = code.slice(0, LIMITS.short);
+    code = code.slice(0, LIMITS.short).trim();
   }
-  const existing = tickets.find((t) => t.serial.toLowerCase() === code.toLowerCase());
+  const existing = sameSerial(code);
   if (existing) {
     select(existing.id);
     flashRail(existing.id);
     toast(`${existing.serial} already has an open ticket.`, 'warn');
     return;
   }
+  if (!roomForAnother()) return;
   const t = newTicket(code, 'scan', loadTech());
   tickets.push(t);
   activeId = t.id;
@@ -79,6 +109,16 @@ function openFromScan(raw: string): void {
 }
 
 function openManual(): void {
+  // Clicking "New ticket by hand" again (or double-clicking it) reuses the untouched blank
+  // ticket instead of stacking up empty ones.
+  const blank = tickets.find((t) => t.openedBy === 'manual' && isBlank(t));
+  if (blank) {
+    if (blank.id !== activeId) select(blank.id);
+    flashRail(blank.id);
+    document.getElementById('f-serial')?.focus();
+    return;
+  }
+  if (!roomForAnother()) return;
   const t = newTicket('', 'manual', loadTech());
   tickets.push(t);
   activeId = t.id;
@@ -147,18 +187,46 @@ function flashRail(id: string): void {
 
 /* ---------- form building blocks ---------- */
 
+/** Warns when pasted text is longer than the field allows (the browser cuts it silently). */
+function warnLongPaste(field: HTMLInputElement | HTMLTextAreaElement, max: number): void {
+  field.addEventListener('paste', (e) => {
+    const pasted = (e as ClipboardEvent).clipboardData?.getData('text') ?? '';
+    const kept = field.value.length - ((field.selectionEnd ?? 0) - (field.selectionStart ?? 0));
+    if (kept + pasted.length > max) toast(`That paste was longer than ${max} characters, so the end was cut off.`, 'warn');
+  });
+}
+
 function textInput(
   value: string,
   max: number,
   set: (v: string) => void,
   attrs: Record<string, string | boolean> = {},
+  onCommit?: (v: string) => void,
 ): HTMLInputElement {
   const input = el('input', { type: 'text', maxlength: max, autocomplete: 'off', spellcheck: 'false', ...attrs });
   input.value = value;
   input.addEventListener('input', () => {
-    set(input.value.slice(0, max));
+    // Drop invisible control characters (some scanners send them) without moving the caret more than needed.
+    const clean = cleanText(input.value).slice(0, max);
+    if (clean !== input.value) {
+      const caret = Math.max(0, (input.selectionStart ?? clean.length) - (input.value.length - clean.length));
+      input.value = clean;
+      input.setSelectionRange(caret, caret);
+    }
+    set(clean);
     changed();
   });
+  // Leading and trailing spaces are trimmed when the field is left, so " ABC" and "ABC" are the same serial.
+  input.addEventListener('change', () => {
+    const trimmed = input.value.trim();
+    if (trimmed !== input.value) {
+      input.value = trimmed;
+      set(trimmed);
+      changed();
+    }
+    onCommit?.(trimmed);
+  });
+  warnLongPaste(input, max);
   return input;
 }
 
@@ -202,6 +270,16 @@ function counter(
     id: id ?? null,
     'aria-label': id ? null : name,
   });
+  // Number fields accept "e", "+", "-" and "." and change value when scrolled over. Only digits make sense here.
+  input.addEventListener('keydown', (e) => {
+    if (e.key.length === 1 && !/[0-9]/.test(e.key) && !e.ctrlKey && !e.metaKey) e.preventDefault();
+  });
+  input.addEventListener('beforeinput', (e) => {
+    if (e.data && /[^0-9]/.test(e.data)) e.preventDefault();
+  });
+  input.addEventListener('wheel', (e) => {
+    if (document.activeElement === input) e.preventDefault();
+  }, { passive: false });
   const paint = (v: number): void => {
     dec.setAttribute('aria-disabled', String(v <= min));
     inc.setAttribute('aria-disabled', String(v >= max));
@@ -346,8 +424,15 @@ function notesField(t: Ticket): HTMLElement {
   const area = el('textarea', { id: 'f-notes', maxlength: LIMITS.notes, rows: 5, placeholder: 'Anything the next person should know' });
   area.value = t.notes;
   const count = el('span', { class: 'char-count', 'aria-live': 'off' }, `${t.notes.length} / ${LIMITS.notes}`);
+  warnLongPaste(area, LIMITS.notes);
   area.addEventListener('input', () => {
-    t.notes = area.value.slice(0, LIMITS.notes);
+    const clean = cleanText(area.value, true).slice(0, LIMITS.notes);
+    if (clean !== area.value) {
+      const caret = Math.max(0, (area.selectionStart ?? clean.length) - (area.value.length - clean.length));
+      area.value = clean;
+      area.setSelectionRange(caret, caret);
+    }
+    t.notes = clean;
     count.textContent = `${t.notes.length} / ${LIMITS.notes}`;
     changed();
   });
@@ -388,7 +473,16 @@ function renderTicket(): void {
     el(
       'div',
       { class: 't-ident' },
-      field('Serial / barcode', textInput(t.serial, LIMITS.short, (v) => (t.serial = v), { class: 'mono' }), 'f-serial'),
+      field(
+        'Serial / barcode',
+        textInput(t.serial, LIMITS.short, (v) => (t.serial = v), { class: 'mono' }, (v) => {
+          const other = sameSerial(v, t.id);
+          if (!other) return;
+          flashRail(other.id);
+          toast(`Another open ticket already has serial ${other.serial}. Check you haven't opened it twice.`, 'warn');
+        }),
+        'f-serial',
+      ),
       field('Printer model', textInput(t.model, LIMITS.short, (v) => (t.model = v)), 'f-model'),
       field(
         'Technician',
@@ -448,13 +542,14 @@ function renderTicket(): void {
   // field() put the id on the counter wrapper; point the label at the number input instead.
   steps.querySelector('label[for="f-prints-wrap"]')?.setAttribute('for', 'f-prints');
 
-  const saveBtn = el('button', { type: 'button', class: 'btn' }, 'Save to folder');
+  const isBusy = busy.has(t.id);
+  const saveBtn = el('button', { type: 'button', class: 'btn', 'data-action': true, disabled: isBusy }, 'Save to folder');
   saveBtn.addEventListener('click', () => void saveCurrent(t));
-  const deleteBtn = el('button', { type: 'button', class: 'btn btn-quiet btn-danger' }, 'Delete ticket');
+  const deleteBtn = el('button', { type: 'button', class: 'btn btn-quiet btn-danger', 'data-action': true, disabled: isBusy }, 'Delete ticket');
   deleteBtn.addEventListener('click', () => deleteTicket(t));
-  const failBtn = el('button', { type: 'button', class: 'btn btn-fail' }, 'Finish as failed');
+  const failBtn = el('button', { type: 'button', class: 'btn btn-fail', 'data-action': true, disabled: isBusy }, 'Finish as failed');
   failBtn.addEventListener('click', () => void finish(t, 'failed'));
-  const passBtn = el('button', { type: 'button', class: 'btn btn-pass' }, 'Finish as passed');
+  const passBtn = el('button', { type: 'button', class: 'btn btn-pass', 'data-action': true, disabled: isBusy }, 'Finish as passed');
   passBtn.addEventListener('click', () => void finish(t, 'passed'));
 
   const actions = el(
@@ -478,8 +573,20 @@ function describeSave(res: SaveResult): string {
   return '';
 }
 
+function setBusy(id: string, on: boolean): void {
+  if (on) busy.add(id);
+  else busy.delete(id);
+  if (id !== activeId) return;
+  ticketHost.querySelectorAll<HTMLButtonElement>('[data-action]').forEach((b) => {
+    b.disabled = on;
+  });
+  ticketHost.querySelector('.ticket')?.setAttribute('aria-busy', String(on));
+}
+
 async function saveCurrent(t: Ticket): Promise<void> {
+  if (busy.has(t.id)) return;
   flush();
+  setBusy(t.id, true);
   try {
     const res = await saveTicket(t);
     if (res.where === 'cancelled') {
@@ -490,14 +597,24 @@ async function saveCurrent(t: Ticket): Promise<void> {
     void refreshFolder();
   } catch (err) {
     toast(`Couldn't save to the folder: ${(err as Error).message}`, 'fail');
+  } finally {
+    setBusy(t.id, false);
   }
 }
 
-async function finish(t: Ticket, result: 'passed' | 'failed'): Promise<void> {
-  flush();
+/** Things that look wrong on a ticket about to be finished. */
+function finishWarnings(t: Ticket, result: 'passed' | 'failed'): string[] {
   const warnings: string[] = [];
   const [visual, power, repair] = stepsDone(t);
+  const named = t.parts.filter((p) => p.name.trim());
   if (!t.serial.trim()) warnings.push('No serial or barcode is entered.');
+  const twin = sameSerial(t.serial, t.id);
+  if (twin) warnings.push(`Another open ticket has the same serial (${twin.serial}).`);
+  if (t.testPrint.result !== '' && t.testPrint.count === 0) warnings.push('The test print has a result but Prints run is 0.');
+  if (t.repair.partsReplaced && !named.length) warnings.push('Parts replaced is checked but no parts are listed.');
+  if (!t.repair.partsReplaced && named.length) warnings.push('Parts are listed but Parts replaced is not checked.');
+  const zero = named.filter((p) => p.qty === 0);
+  if (zero.length) warnings.push(`Quantity is 0 for: ${zero.map((p) => p.name.trim()).join(', ')}.`);
   if (result === 'passed') {
     if (!visual) warnings.push('Visual inspection is not checked.');
     if (!power) warnings.push('Power and calibration are not both checked.');
@@ -505,29 +622,44 @@ async function finish(t: Ticket, result: 'passed' | 'failed'): Promise<void> {
     if (t.testPrint.result === 'fail') warnings.push('The test print is marked failed.');
     if (t.testPrint.result === '') warnings.push('The test print has no result.');
   }
+  return warnings;
+}
+
+async function finish(t: Ticket, result: 'passed' | 'failed'): Promise<void> {
+  if (busy.has(t.id)) return;
+  flush();
+  const warnings = finishWarnings(t, result);
   if (warnings.length && !window.confirm(`Finish this ticket as ${result}?\n\n${warnings.join('\n')}`)) return;
 
   const now = new Date().toISOString();
   const finished: Ticket = { ...t, status: result, finishedAt: now, updatedAt: now };
   let res: SaveResult;
+  setBusy(t.id, true);
   try {
     res = await saveTicket(finished);
   } catch (err) {
     toast(`Couldn't save to the folder: ${(err as Error).message}. The ticket is still open.`, 'fail');
     return;
+  } finally {
+    setBusy(t.id, false);
   }
   if (res.where === 'cancelled') {
     toast('Choose a save folder to finish the ticket. It is still open.', 'warn');
     return;
   }
   addFinished(finished);
-  closeTicket(t.id);
+  // Another tab may have finished or deleted it while this one was saving.
+  if (tickets.some((x) => x.id === t.id)) closeTicket(t.id);
   toast(`${t.serial || 'Ticket'} finished as ${result}. ${describeSave(res)}.`, result === 'passed' ? 'pass' : 'fail');
   void refreshFolder();
   scanInput.focus();
 }
 
 function deleteTicket(t: Ticket): void {
+  if (busy.has(t.id)) {
+    toast('This ticket is still saving. Try again in a moment.', 'warn');
+    return;
+  }
   if (!window.confirm(`Delete the ticket for ${t.serial || 'this printer'}? Anything not saved to a folder is lost.`)) return;
   closeTicket(t.id);
   toast('Ticket deleted.', 'info');
@@ -594,13 +726,21 @@ document.addEventListener('keydown', (e) => {
   scanInput.focus();
 });
 
-// Another tab changed the open tickets: pick up its version.
+// Another tab changed the open tickets: pick up its version. If the ticket open here is the same or
+// newer than the other tab's copy, keep this tab's copy so typing isn't interrupted and edits
+// still waiting for autosave aren't thrown away.
 window.addEventListener('storage', (e) => {
   if (e.key !== OPEN_KEY) return;
-  tickets = loadOpen();
+  const incoming = loadOpen();
+  const local = active();
+  const i = local ? incoming.findIndex((x) => x.id === local.id) : -1;
+  const keepLocal = local !== null && i >= 0 && Date.parse(local.updatedAt) >= Date.parse(incoming[i]!.updatedAt);
+  if (keepLocal) incoming[i] = local;
+  tickets = incoming;
   if (!active()) activeId = tickets[0]?.id ?? null;
   renderRail();
-  renderTicket();
+  if (!keepLocal) renderTicket();
+  else if (saveTimer !== undefined) persist();
 });
 
 window.addEventListener('pagehide', flush);

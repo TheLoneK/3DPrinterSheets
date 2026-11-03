@@ -1,5 +1,5 @@
 // Saved forms reader: open the save folder, individual files, or this browser's finished list.
-import { STEP_NAMES, stepsDone, type Status, type Ticket } from './model.js';
+import { LIMITS, STEP_NAMES, stepsDone, type Status, type Ticket } from './model.js';
 import { loadFinished, loadOpen, reopen } from './store.js';
 import { byId, el, startClock, toast } from './dom.js';
 import { STATUS_LABEL, fmtDateTime, fmtDuration, fmtShortDate } from './format.js';
@@ -62,8 +62,11 @@ function showBrowser(): void {
   );
 }
 
-function skippedNote(skipped: number): string {
-  return skipped ? ` ${skipped} file${skipped === 1 ? '' : 's'} weren’t ticket forms and were skipped.` : '';
+function skippedNote(skipped: number, truncated = false): string {
+  const parts: string[] = [];
+  if (skipped) parts.push(` ${skipped} file${skipped === 1 ? '' : 's'} weren’t ticket forms and were skipped.`);
+  if (truncated) parts.push(` Only the first ${LIMITS.filesPerLoad} files were read.`);
+  return parts.join('');
 }
 
 async function loadFolder(handle: FileSystemDirectoryHandle, ask: boolean): Promise<boolean> {
@@ -72,9 +75,9 @@ async function loadFolder(handle: FileSystemDirectoryHandle, ask: boolean): Prom
     return false;
   }
   try {
-    const { entries: rows, skipped } = await readFolder(handle);
+    const { entries: rows, skipped, truncated } = await readFolder(handle);
     const list = rows.map((r: FileEntry) => ({ ticket: r.ticket, file: r.file }));
-    setEntries(list, 'folder', `${list.length} form${list.length === 1 ? '' : 's'} in ${handle.name}.${skippedNote(skipped)}`);
+    setEntries(list, 'folder', `${list.length} form${list.length === 1 ? '' : 's'} in ${handle.name}.${skippedNote(skipped, truncated)}`);
     return true;
   } catch (err) {
     toast(`Couldn't read ${handle.name}: ${(err as Error).message}`, 'fail');
@@ -82,8 +85,24 @@ async function loadFolder(handle: FileSystemDirectoryHandle, ask: boolean): Prom
   }
 }
 
-async function loadFileList(files: FileList | File[]): Promise<void> {
-  const { entries: rows, skipped } = await readFiles(files);
+let loadingFiles = false;
+
+async function loadFileList(files: File[]): Promise<void> {
+  // A second drop or pick while the first batch is still being read would race it.
+  if (loadingFiles) {
+    toast('Still reading the last files. Try again in a moment.', 'warn');
+    return;
+  }
+  loadingFiles = true;
+  try {
+    await readAndShow(files);
+  } finally {
+    loadingFiles = false;
+  }
+}
+
+async function readAndShow(files: File[]): Promise<void> {
+  const { entries: rows, skipped, truncated } = await readFiles(files);
   if (!rows.length) {
     toast('None of those files are ticket forms.', 'warn');
     return;
@@ -91,7 +110,7 @@ async function loadFileList(files: FileList | File[]): Promise<void> {
   setEntries(
     rows.map((r) => ({ ticket: r.ticket, file: r.file })),
     'files',
-    `${rows.length} form${rows.length === 1 ? '' : 's'} from opened files.${skippedNote(skipped)}`,
+    `${rows.length} form${rows.length === 1 ? '' : 's'} from opened files.${skippedNote(skipped, truncated)}`,
   );
 }
 
@@ -163,7 +182,12 @@ function renderDetail(entry: Entry | null): void {
   reopenBtn.addEventListener('click', () => {
     if (t.status !== 'open' && !window.confirm(`This form is marked ${STATUS_LABEL[t.status].toLowerCase()}. Reopen it as an open ticket?`)) return;
     if (loadOpen().some((x) => x.id === t.id) && !window.confirm('This ticket is already open. Replace the open copy with this saved one?')) return;
-    if (!reopen(t)) {
+    const res = reopen(t);
+    if (res === 'full') {
+      toast(`There are already ${LIMITS.openTickets} open tickets. Finish or delete some first.`, 'fail');
+      return;
+    }
+    if (res === 'storage') {
       toast('Couldn’t reopen it: browser storage is full or blocked.', 'fail');
       return;
     }
@@ -175,12 +199,16 @@ function renderDetail(entry: Entry | null): void {
   if (source === 'browser') {
     const saveBtn = el('button', { type: 'button', class: 'btn' }, 'Save to folder');
     saveBtn.addEventListener('click', async () => {
+      if (saveBtn.disabled) return;
+      saveBtn.disabled = true;
       try {
         const res = await saveTicket(t);
         if (res.where === 'folder') toast(`Saved to ${res.folder}/${res.file}`, 'info');
         else if (res.where === 'download') toast(`Downloaded ${res.file}`, 'info');
       } catch (err) {
         toast(`Couldn't save: ${(err as Error).message}`, 'fail');
+      } finally {
+        saveBtn.disabled = false;
       }
     });
     actions.push(saveBtn);

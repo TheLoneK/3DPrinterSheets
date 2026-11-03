@@ -818,3 +818,7 @@ textarea { resize: vertical; min-height: 120px; line-height: 1.5; }
   .bench { display: block; padding: 0; max-width: none; }
   .ticket { border: 0; }
 }
+
+/* Action buttons are disabled while a save or finish is running. */
+.btn:disabled { opacity: 0.55; cursor: progress; }
+.ticket[aria-busy="true"] .t-actions { cursor: progress; }
