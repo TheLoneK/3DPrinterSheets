@@ -33,4 +33,4 @@ The workflow in `.github/workflows/deploy.yml` builds and deploys on every push 
 
 1. In the repo on GitHub: **Settings → Pages → Build and deployment → Source: GitHub Actions**.
 2. Push to `main` (or run the workflow from the **Actions** tab).
-3. The site appears at `https://thelonek.github.io/3dprintersheets/`.
+3. The site appears at `https://thelonek.github.io/3DPrinterSheets/`.
