@@ -44,6 +44,35 @@ export function toast(message: string, kind: ToastKind = 'info', ms = 4200): voi
   }, ms);
 }
 
+/**
+ * Copies text to the clipboard. Uses the Clipboard API where the page allows it (HTTPS or localhost)
+ * and falls back to a hidden textarea + execCommand on plain-HTTP pages, such as the preview shared on the network.
+ */
+export async function copyText(text: string): Promise<boolean> {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      /* fall through to the older way */
+    }
+  }
+  const back = document.activeElement as HTMLElement | null;
+  const area = el('textarea', { readonly: true, 'aria-hidden': 'true', tabindex: '-1', class: 'copy-buffer' });
+  area.value = text;
+  document.body.append(area);
+  area.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {
+    ok = false;
+  }
+  area.remove();
+  back?.focus({ preventScroll: true });
+  return ok;
+}
+
 export function startClock(node: HTMLElement): void {
   const tick = (): void => {
     const now = new Date();

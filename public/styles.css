@@ -400,6 +400,47 @@ input[type="text"]:focus, input[type="search"]:focus, textarea:focus { backgroun
 
 textarea { resize: vertical; min-height: 120px; line-height: 1.5; }
 
+/* A text field with a Copy button joined to its right edge. */
+.copy-field { display: flex; min-width: 0; }
+.copy-field input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.copy-btn {
+  flex: none;
+  min-width: 64px;
+  min-height: 44px;
+  padding: 0 12px;
+  margin-left: -1.5px;
+  border: 1.5px solid var(--line);
+  border-radius: 0 var(--r-s) var(--r-s) 0;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.copy-btn:hover { color: var(--ink); border-color: var(--muted); position: relative; }
+.copy-btn[data-copied] { color: var(--pass); border-color: var(--pass); background: var(--pass-soft); position: relative; }
+.copy-field input[type="text"]:focus { position: relative; z-index: 1; }
+
+/* Off-screen buffer used by copyText() on plain-HTTP pages. */
+.copy-buffer { position: fixed; top: 0; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+
+select {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-s);
+  background: var(--sunk);
+  cursor: pointer;
+}
+select:hover { border-color: var(--muted); }
+select:focus { background: var(--surface); border-color: var(--ink); }
+.failure-select { width: 88px; font-variant-numeric: tabular-nums; }
+
 .t-times {
   display: flex;
   flex-wrap: wrap;
@@ -556,6 +597,14 @@ textarea { resize: vertical; min-height: 120px; line-height: 1.5; }
   padding: 18px 24px;
   border-top: 1.5px solid var(--line);
 }
+
+/* Failure level and Downgrade sit on one line above Notes. */
+.record-compact { padding-top: 14px; padding-bottom: 14px; }
+.condition-row { display: flex; flex-wrap: wrap; align-items: end; gap: 12px 24px; max-width: 640px; }
+.condition-row .check { flex: 1 1 280px; }
+.check-warn:has(input:checked) { background: var(--warn-soft); border-color: var(--warn); }
+.check-warn input { accent-color: var(--warn); }
+
 .record-title {
   font-family: var(--font-cond);
   font-weight: 600;
@@ -808,6 +857,14 @@ textarea { resize: vertical; min-height: 120px; line-height: 1.5; }
   .t-actions-right { margin-left: 0; }
   .t-actions-right .btn, .t-actions-left .btn { flex: 1 1 auto; }
   .detail-head, .detail .t-times { padding-left: 16px; padding-right: 16px; }
+}
+
+/* Phones: the part name and its Copy button get the full width, with quantity and remove below. */
+@media (max-width: 520px) {
+  .part-row { grid-template-columns: minmax(0, 1fr) 36px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+  .part-row .copy-field { grid-column: 1 / -1; }
+  .parts-head { display: none; }
+  .part-row .counter { justify-self: start; }
 }
 
 /* ---------- print (reader) ---------- */

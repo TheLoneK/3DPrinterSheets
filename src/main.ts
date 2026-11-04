@@ -14,7 +14,7 @@ import {
   type Ticket,
 } from './model.js';
 import { OPEN_KEY, addFinished, loadOpen, loadTech, saveOpen, saveTech } from './store.js';
-import { byId, el, startClock, toast } from './dom.js';
+import { byId, copyText, el, startClock, toast } from './dom.js';
 import { fmtDateTime, fmtDuration, fmtTime } from './format.js';
 import { chooseFolder, folderSupported, getSaveFolder, saveTicket, type SaveResult } from './folder.js';
 
@@ -230,6 +230,36 @@ function textInput(
   return input;
 }
 
+/** A small Copy button that copies just this field's text (trimmed). */
+function copyButton(input: HTMLInputElement, label: string): HTMLButtonElement {
+  const btn = el('button', { type: 'button', class: 'copy-btn', 'aria-label': label, title: label }, 'Copy');
+  let reset: number | undefined;
+  btn.addEventListener('click', async () => {
+    const value = input.value.trim();
+    if (!value) {
+      toast('Nothing to copy yet.', 'warn');
+      return;
+    }
+    if (!(await copyText(value))) {
+      toast("Couldn't copy. Select the text and press Ctrl+C.", 'fail');
+      return;
+    }
+    btn.textContent = 'Copied';
+    btn.dataset.copied = '';
+    window.clearTimeout(reset);
+    reset = window.setTimeout(() => {
+      btn.textContent = 'Copy';
+      delete btn.dataset.copied;
+    }, 1200);
+  });
+  return btn;
+}
+
+/** A text input with its Copy button beside it. */
+function withCopy(input: HTMLInputElement, label: string): HTMLElement {
+  return el('div', { class: 'copy-field' }, input, copyButton(input, label));
+}
+
 function field(label: string, control: HTMLElement, id: string): HTMLElement {
   control.id = id;
   return el('div', { class: 'field' }, el('label', { for: id }, label), control);
@@ -394,6 +424,7 @@ function partsEditor(t: Ticket): HTMLElement {
       else list.querySelectorAll<HTMLInputElement>('.part-name')[i + 1]?.focus();
     });
     const qty = counter(p.qty, 0, LIMITS.qtyMax, (v) => (p.qty = v), `quantity of part ${i + 1}`);
+    const copy = withCopy(name, `Copy part ${i + 1} name`);
     const remove = el(
       'button',
       { type: 'button', class: 'icon-btn', 'aria-label': `Remove part ${i + 1}`, title: 'Remove this part' },
@@ -405,7 +436,7 @@ function partsEditor(t: Ticket): HTMLElement {
       changed();
       draw(Math.min(i, t.parts.length - 1));
     });
-    return el('div', { class: 'part-row' }, name, qty, remove);
+    return el('div', { class: 'part-row' }, copy, qty, remove);
   };
 
   addBtn.addEventListener('click', add);
@@ -417,6 +448,29 @@ function partsEditor(t: Ticket): HTMLElement {
     el('div', { class: 'parts-head', 'aria-hidden': 'true' }, el('span', {}, 'Part'), el('span', {}, 'Qty')),
     list,
     addBtn,
+  );
+}
+
+/** Failure level (0–3) and the Downgrade flag, just above Notes. */
+function conditionFields(t: Ticket): HTMLElement {
+  const select = el('select', { class: 'failure-select' });
+  for (let n = 0; n <= LIMITS.failureMax; n++) select.append(el('option', { value: String(n) }, String(n)));
+  select.value = String(t.failureLevel);
+  select.addEventListener('change', () => {
+    t.failureLevel = clampInt(select.value, 0, LIMITS.failureMax, 0);
+    changed();
+  });
+  const downgrade = check(
+    'Downgrade',
+    t.downgrade,
+    (v) => (t.downgrade = v),
+    'External pieces are missing but the unit works, so it sells as a lower tier',
+  );
+  downgrade.classList.add('check-warn');
+  return el(
+    'section',
+    { class: 'record record-compact', 'aria-label': 'Failure level and downgrade' },
+    el('div', { class: 'condition-row' }, field('Failure level', select, 'f-failure'), downgrade),
   );
 }
 
@@ -473,15 +527,19 @@ function renderTicket(): void {
     el(
       'div',
       { class: 't-ident' },
-      field(
-        'Serial / barcode',
-        textInput(t.serial, LIMITS.short, (v) => (t.serial = v), { class: 'mono' }, (v) => {
-          const other = sameSerial(v, t.id);
-          if (!other) return;
-          flashRail(other.id);
-          toast(`Another open ticket already has serial ${other.serial}. Check you haven't opened it twice.`, 'warn');
-        }),
-        'f-serial',
+      el(
+        'div',
+        { class: 'field' },
+        el('label', { for: 'f-serial' }, 'Serial / barcode'),
+        withCopy(
+          textInput(t.serial, LIMITS.short, (v) => (t.serial = v), { class: 'mono', id: 'f-serial' }, (v) => {
+            const other = sameSerial(v, t.id);
+            if (!other) return;
+            flashRail(other.id);
+            toast(`Another open ticket already has serial ${other.serial}. Check you haven't opened it twice.`, 'warn');
+          }),
+          'Copy serial',
+        ),
       ),
       field('Printer model', textInput(t.model, LIMITS.short, (v) => (t.model = v)), 'f-model'),
       field(
@@ -561,7 +619,7 @@ function renderTicket(): void {
   );
 
   ticketHost.replaceChildren(
-    el('article', { class: 'ticket', 'aria-label': `Ticket ${t.serial || 'without serial'}` }, head, steps, partsEditor(t), notesField(t), actions),
+    el('article', { class: 'ticket', 'aria-label': `Ticket ${t.serial || 'without serial'}` }, head, steps, partsEditor(t), conditionFields(t), notesField(t), actions),
   );
 }
 
