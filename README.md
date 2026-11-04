@@ -3,7 +3,7 @@ Quick utility to optimize tracking workflow of 3d printer repairs.
 
 A small TypeScript web app with two pages:
 
-- **Tickets** (`index.html`) — open repair tickets by scanning printer barcodes (back to back is fine) or by hand, then work through the checklist: visual inspection, power and calibration, error codes and parts, test print (pass/fail plus a 0–9 print count), parts used, and notes. Open tickets autosave in the browser until they're finished as passed or failed.
+- **Tickets** (`index.html`) — open repair tickets by scanning printer barcodes (back to back is fine) or by hand, then work through the checklist: visual inspection, power and calibration, error codes and parts, test print (pass/fail plus a 0–9 print count), parts used, failure level (0–3), a **Downgrade** flag, and notes. Open tickets autosave in the browser until they're finished as passed or failed.
 - **Saved forms** (`reader.html`) — read forms from the save folder, from individual files, or from the last 50 tickets finished in this browser. Search, filter by status, print, or reopen a form as a ticket.
 
 ## Using it
@@ -11,6 +11,8 @@ A small TypeScript web app with two pages:
 - Any USB or Bluetooth scanner in keyboard (HID) mode works. Each scan ends with Enter (or Tab) and opens a ticket. Scanning a serial that's already open jumps to that ticket.
 - Press **Esc** in any field to jump back to the scan box. Typing while nothing is focused also goes to the scan box.
 - In **Parts used**, Enter moves to the next line (adding one if needed), so you can scan part barcodes one after another.
+- The serial and each part name have a **Copy** button that copies just that field (one part at a time, not the whole list).
+- **Downgrade** marks a unit that works but is missing external pieces, so it can be sold as a lower tier. Forms saved before failure level and Downgrade existed open as level 0, not downgraded.
 - **Save to folder** writes one JSON file per ticket (`<serial>_<opened date-time>.json`). Saving again, or finishing, overwrites that same file.
 - In Chrome or Edge you pick the folder once and it's remembered. Other browsers download the file instead.
 - Text fields are capped at 32 characters (error codes 64, notes 2000).

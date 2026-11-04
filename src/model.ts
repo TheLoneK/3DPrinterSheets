@@ -6,6 +6,7 @@ export const LIMITS = {
   notes: 2000,
   printsMax: 9,
   qtyMax: 99,
+  failureMax: 3, // failure level runs 0 to this
   parts: 30,
   fileBytes: 200_000,
   openTickets: 100, // open tickets kept in this browser
@@ -52,6 +53,10 @@ export interface Ticket {
   repair: { errorCodes: string; errorsFixed: boolean; partsReplaced: boolean };
   testPrint: { result: PrintResult; count: number };
   parts: PartLine[];
+  /** 0 to LIMITS.failureMax. */
+  failureLevel: number;
+  /** External pieces are missing but the unit works, so it sells as a lower tier. */
+  downgrade: boolean;
   notes: string;
 }
 
@@ -82,6 +87,8 @@ export function newTicket(serial: string, openedBy: Ticket['openedBy'], technici
     repair: { errorCodes: '', errorsFixed: false, partsReplaced: false },
     testPrint: { result: '', count: 0 },
     parts: [blankPart()],
+    failureLevel: 0,
+    downgrade: false,
     notes: '',
   };
 }
@@ -110,6 +117,8 @@ export function isBlank(t: Ticket): boolean {
     !t.repair.partsReplaced &&
     t.testPrint.result === '' &&
     t.testPrint.count === 0 &&
+    t.failureLevel === 0 &&
+    !t.downgrade &&
     t.parts.every((p) => !p.name.trim())
   );
 }
@@ -175,6 +184,9 @@ export function normalizeTicket(raw: unknown): Ticket | null {
       count: clampInt(tp.count, 0, LIMITS.printsMax, 0),
     },
     parts,
+    // Forms saved before these fields existed read as level 0, not downgraded.
+    failureLevel: clampInt(r.failureLevel, 0, LIMITS.failureMax, 0),
+    downgrade: bool(r.downgrade),
     notes: str(r.notes, LIMITS.notes, true),
   };
 }

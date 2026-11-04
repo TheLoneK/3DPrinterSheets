@@ -269,6 +269,13 @@ function renderDetail(entry: Entry | null): void {
     el(
       'section',
       { class: 'record' },
+      el('h3', { class: 'record-title' }, 'Failure level and downgrade'),
+      el('p', {}, 'Failure level: ', el('strong', {}, String(t.failureLevel)), ` of ${LIMITS.failureMax}`),
+      yes(t.downgrade, 'Downgrade: sells as a lower tier', 'Not downgraded'),
+    ),
+    el(
+      'section',
+      { class: 'record' },
       el('h3', { class: 'record-title' }, 'Notes'),
       t.notes ? el('p', { class: 'notes-text' }, t.notes) : el('p', { class: 'muted' }, 'No notes.'),
     ),
